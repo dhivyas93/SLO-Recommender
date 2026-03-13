@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  # SLO Recommendation System API
+  slo-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: slo-recommendation-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount data directory for persistence
+      - ./data:/app/data
+      # Mount source for development (optional, comment out for production)
+      - ./src:/app/src
+    environment:
+      # LLM Configuration
+      - LLM_PROVIDER=local
+      - LLM_MODEL=llama3.2:3b-instruct-q4_0
+      - OLLAMA_ENDPOINT=http://ollama:11434
+      
+      # Optional: OpenAI/Anthropic (if using paid providers)
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      
+      # Application Settings
+      - LOG_LEVEL=INFO
+      - API_RATE_LIMIT=100
+      - REQUEST_TIMEOUT=3
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - slo-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Ollama - Local LLM Server (No-Cost Option)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: slo-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      # Persist Ollama models
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    networks:
+      - slo-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Optional: GPU support (uncomment if you have NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Model Initialization Service (pulls Llama 3.2 3B on first run)
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: slo-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - slo-network
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        echo "Pulling Llama 3.2 3B Instruct model..."
+        ollama pull llama3.2:3b-instruct-q4_0
+        echo "Model ready!"
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    restart: "no"
+
+networks:
+  slo-network:
+    driver: bridge
+
+volumes:
+  ollama-data:
+    driver: local
